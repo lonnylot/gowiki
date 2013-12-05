@@ -28,7 +28,7 @@ func loadPage(title string) (*Page, error) {
 
 var (
 	validPath = regexp.MustCompile("^/(edit|save|view)/([a-zA-Z0-9]+)$")
-	templates = template.Must(template.ParseFiles("edit.html", "view.html"))
+	templates = template.Must(template.ParseFiles("tmpl/edit.html", "tmpl/view.html"))
 )
 
 func renderTemplate(w http.ResponseWriter, tmpl string, p *Page) {
