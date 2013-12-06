@@ -1,22 +1,27 @@
 package main
 
 import (
-	"html/template"
 	"regexp"
 	"io/ioutil"
 	"net/http"
+	"time"
 )
 
+const templateInterval = 30 * time.Second // Template interval
+
+// Hold the page information
 type Page struct {
 	Title string
 	Body []byte
 }
 
+// Save a page to a destination based on the page Title
 func (p *Page) save() error {
 	filename := p.Title + ".txt"
 	return ioutil.WriteFile(filename, p.Body, 0600)
 }
 
+// Load a page based on the title
 func loadPage(title string) (*Page, error) {
 	filename := title + ".txt"
 	body, err := ioutil.ReadFile(filename)
@@ -26,17 +31,7 @@ func loadPage(title string) (*Page, error) {
 	return &Page{Title: title, Body: body}, nil
 }
 
-var (
-	validPath = regexp.MustCompile("^/(edit|save|view)/([a-zA-Z0-9]+)$")
-	templates = template.Must(template.ParseFiles("tmpl/edit.html", "tmpl/view.html"))
-)
-
-func renderTemplate(w http.ResponseWriter, tmpl string, p *Page) {
-	err := templates.ExecuteTemplate(w, tmpl+".html", p)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
-}
+var validPath = regexp.MustCompile("^/(edit|save|view)/([a-zA-Z0-9]+)$")
 
 func makeHandler(fn func (http.ResponseWriter, *http.Request, string)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -78,6 +73,7 @@ func saveHandler(w http.ResponseWriter, r *http.Request, title string) {
 }
 
 func main() {
+	LoadTemplates("tmpl", templateInterval)
 	http.HandleFunc("/view/", makeHandler(viewHandler))
 	http.HandleFunc("/edit/", makeHandler(editHandler))
 	http.HandleFunc("/save/", makeHandler(saveHandler))
