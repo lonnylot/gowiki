@@ -74,6 +74,7 @@ func saveHandler(w http.ResponseWriter, r *http.Request, title string) {
 
 func main() {
 	LoadTemplates("tmpl", templateInterval)
+	http.Handle("/", http.RedirectHandler("/view/FrontPage", 301))
 	http.HandleFunc("/view/", makeHandler(viewHandler))
 	http.HandleFunc("/edit/", makeHandler(editHandler))
 	http.HandleFunc("/save/", makeHandler(saveHandler))
