@@ -5,6 +5,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"time"
+	"os"
 )
 
 const templateInterval = 30 * time.Second // Template interval
@@ -17,13 +18,13 @@ type Page struct {
 
 // Save a page to a destination based on the page Title
 func (p *Page) save() error {
-	filename := p.Title + ".txt"
+	filename := "data/" + p.Title + ".txt"
 	return ioutil.WriteFile(filename, p.Body, 0600)
 }
 
 // Load a page based on the title
 func loadPage(title string) (*Page, error) {
-	filename := title + ".txt"
+	filename := "data/" + title + ".txt"
 	body, err := ioutil.ReadFile(filename)
 	if err != nil {
 		return nil, err
@@ -73,8 +74,15 @@ func saveHandler(w http.ResponseWriter, r *http.Request, title string) {
 }
 
 func main() {
+	cwd, err := os.Getwd()
+	if err != nil {
+		// The situation where err is not nil is beyond me now
+		panic(err)
+	}
+
 	LoadTemplates("tmpl", templateInterval)
 	http.Handle("/", http.RedirectHandler("/view/FrontPage", 301))
+	http.Handle("/static/", http.FileServer(http.Dir(cwd)))
 	http.HandleFunc("/view/", makeHandler(viewHandler))
 	http.HandleFunc("/edit/", makeHandler(editHandler))
 	http.HandleFunc("/save/", makeHandler(saveHandler))
