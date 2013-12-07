@@ -13,6 +13,7 @@ type templates struct {
 	root string // The root templates dir
 	interval time.Duration // How often to refresh the templates
 	template *template.Template
+	reload chan bool
 }
 
 var t *templates
@@ -27,13 +28,14 @@ func LoadTemplates(root string, interval time.Duration) {
 
 	absRoot := path.Join(cwd, root)
 	t = &templates{root: absRoot, interval: interval}
+	t.reload = make(chan bool)
 	t.loadTemplates()
 	go func(){
 		tick := time.Tick(t.interval)
 		for{
 			select{
 			case <-tick:
-				t.loadTemplates()
+				t.reload <- true
 			}
 		}
 	}()
@@ -85,8 +87,16 @@ func (t *templates) templateFilePaths(root string) ([]string, error) {
 
 // Render our templates that were previously parsed
 func renderTemplate(w http.ResponseWriter, tmpl string, p *Page) {
-	err := t.template.ExecuteTemplate(w, tmpl+".html", p)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	for {
+		select {
+			case <- t.reload:
+				t.loadTemplates()
+			default:
+				err := t.template.ExecuteTemplate(w, tmpl+".html", p)
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+				}
+				return
+		}
 	}
 }
