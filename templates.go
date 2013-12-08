@@ -7,13 +7,15 @@ import(
 	"io/ioutil"
 	"os"
 	"path"
+	"bytes"
+	"regexp"
 )
 
 type templates struct {
 	root string // The root templates dir
 	interval time.Duration // How often to refresh the templates
 	template *template.Template
-	reload chan bool
+	reload <- chan time.Time
 }
 
 var t *templates
@@ -28,17 +30,8 @@ func LoadTemplates(root string, interval time.Duration) {
 
 	absRoot := path.Join(cwd, root)
 	t = &templates{root: absRoot, interval: interval}
-	t.reload = make(chan bool)
+	t.reload = time.Tick(t.interval)
 	t.loadTemplates()
-	go func(){
-		tick := time.Tick(t.interval)
-		for{
-			select{
-			case <-tick:
-				t.reload <- true
-			}
-		}
-	}()
 }
 
 // Load our templates from root
@@ -85,6 +78,8 @@ func (t *templates) templateFilePaths(root string) ([]string, error) {
 	return s, nil
 }
 
+var linkPageName = regexp.MustCompile(`\[([a-zA-Z0-9]+)\]`)
+
 // Render our templates that were previously parsed
 func renderTemplate(w http.ResponseWriter, tmpl string, p *Page) {
 	for {
@@ -92,7 +87,23 @@ func renderTemplate(w http.ResponseWriter, tmpl string, p *Page) {
 			case <- t.reload:
 				t.loadTemplates()
 			default:
-				err := t.template.ExecuteTemplate(w, tmpl+".html", p)
+				tb := new(bytes.Buffer)
+				err := t.template.ExecuteTemplate(tb, tmpl+".html", p)
+
+				b := linkPageName.ReplaceAllFunc(tb.Bytes(), func(pn []byte) []byte {
+					b := bytes.NewBufferString("<a href=\"/view/")
+					b.Write(pn[1:len(pn)-1])
+					b.WriteString("\">")
+					b.Write(pn[1:len(pn)-1])
+					b.WriteString("</a>")
+
+					return b.Bytes()
+				})
+
+				tb.Reset()
+				tb.Write(b)
+
+				tb.WriteTo(w)
 				if err != nil {
 					http.Error(w, err.Error(), http.StatusInternalServerError)
 				}
