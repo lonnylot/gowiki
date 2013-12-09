@@ -80,7 +80,7 @@ func main() {
 		panic(err)
 	}
 
-	LoadTemplates("tmpl", templateInterval)
+	LoadTemplates(Options{root:"tmpl", interval: templateInterval, extensions: []string{".html", ".tmpl"}})
 	http.Handle("/", http.RedirectHandler("/view/FrontPage", 301))
 	http.Handle("/static/", http.FileServer(http.Dir(cwd)))
 	http.HandleFunc("/view/", makeHandler(viewHandler))

@@ -9,43 +9,54 @@ import(
 	"path"
 	"bytes"
 	"regexp"
+	"sync"
 )
 
-type templates struct {
+type Options struct {
 	root string // The root templates dir
 	interval time.Duration // How often to refresh the templates
+	extensions []string
+}
+
+type templates struct {
+	Options
 	template *template.Template
 	reload <- chan time.Time
+	sync.Mutex
 }
 
 var t *templates
 
 // Load the templates in the root and re-parse the templates in dir every interval
-func LoadTemplates(root string, interval time.Duration) {
+func LoadTemplates(o Options) {
+	t = &templates{Options:o}
+
 	cwd, err := os.Getwd()
 	if err != nil {
 		// The situation where err is not nil is beyond me now
 		panic(err)
 	}
+	t.root = path.Join(cwd, t.root)
 
-	absRoot := path.Join(cwd, root)
-	t = &templates{root: absRoot, interval: interval}
 	t.reload = time.Tick(t.interval)
 	t.loadTemplates()
 }
 
 // Load our templates from root
 func (t *templates) loadTemplates() {
-	s, err := t.templateFilePaths(t.root)
+	temp := template.New("templates")
+
+	err := t.parseTemplates(t.root, temp)
 	if err != nil {
 		panic(err)
 	}
-	temp := template.Must(template.ParseFiles(s...))
+	t.Lock()
 	t.template = temp
+	t.Unlock()
 }
 
 // Recursively get the template file paths
-func (t *templates) templateFilePaths(root string) ([]string, error) {
+func (t *templates) parseTemplates(root string, temp *template.Template) error {
 	// Ensure the root has a trailing "/"
 	if root[len(root)-1:] != "/" {
 		root = root + "/"
@@ -53,60 +64,95 @@ func (t *templates) templateFilePaths(root string) ([]string, error) {
 
 	fis, err := ioutil.ReadDir(root)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	
-	s := make([]string, 0)
 	for _, fi := range fis {
-		if fi.IsDir() == false && path.Ext(fi.Name()) != ".html" {
-			continue
-		}
-
 		fn := path.Join(root, fi.Name())
-		temps := []string{fn}
+		ext := path.Ext(fi.Name())
 
 		if fi.IsDir() {
-			temps, err = t.templateFilePaths(fn)
+			err = t.parseTemplates(fn, temp)
 			if err != nil {
-				return nil, err
+				return err
+			}
+		} else {
+			// Make sure the extension is allowed
+			allowed := false
+			for _, e := range t.extensions {
+				if e == ext {
+					allowed = true
+					break
+				}
+			}
+			if allowed == false {
+				continue
 			}
 		}
+		
+		b, err := ioutil.ReadFile(fn)
+		if err != nil {
+			return err
+		}
 
-		s = append(s, temps...)
+		s := string(b)
+		name := fi.Name()
+		name = name[:len(name)-len(ext)]
+		_, err = temp.New(name).Parse(s)
+		if err != nil {
+			return err
+		}
 	}
 
-	return s, nil
+	return nil
 }
 
-var linkPageName = regexp.MustCompile(`\[([a-zA-Z0-9]+)\]`)
+var wikiPageName = regexp.MustCompile(`\[([a-zA-Z0-9]+)\]`)
+
+func linkPageName(b []byte) []byte {
+	// Exclude the open/close brackets from the page name
+	pn := b[1:len(b)-1]
+
+	// Write the link
+	link := bytes.NewBufferString("<a href=\"/view/")
+	link.Write(pn)
+	link.WriteString("\">")
+	link.Write(pn)
+	link.WriteString("</a>")
+
+	return link.Bytes()
+}
+
+type renderBuffer struct {
+	bytes.Buffer
+}
+
+func (rb *renderBuffer) linkPageName() {
+	// Link our wiki PageName
+	b := wikiPageName.ReplaceAllFunc(rb.Bytes(), linkPageName)
+	rb.Reset()
+	rb.Write(b)
+}
 
 // Render our templates that were previously parsed
-func renderTemplate(w http.ResponseWriter, tmpl string, p *Page) {
+func renderTemplate(w http.ResponseWriter, tmpl string, data interface{}) {
 	for {
 		select {
 			case <- t.reload:
 				t.loadTemplates()
 			default:
-				tb := new(bytes.Buffer)
-				err := t.template.ExecuteTemplate(tb, tmpl+".html", p)
-
-				b := linkPageName.ReplaceAllFunc(tb.Bytes(), func(pn []byte) []byte {
-					b := bytes.NewBufferString("<a href=\"/view/")
-					b.Write(pn[1:len(pn)-1])
-					b.WriteString("\">")
-					b.Write(pn[1:len(pn)-1])
-					b.WriteString("</a>")
-
-					return b.Bytes()
-				})
-
-				tb.Reset()
-				tb.Write(b)
-
-				tb.WriteTo(w)
+				rb := new(renderBuffer)
+				t.Lock()
+				err := t.template.ExecuteTemplate(rb, tmpl, data)
+				t.Unlock()
 				if err != nil {
 					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
 				}
+
+				rb.linkPageName()
+				rb.WriteTo(w)
+
 				return
 		}
 	}
